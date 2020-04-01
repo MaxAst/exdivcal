@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gocolly/colly"
@@ -18,9 +18,13 @@ type Event struct {
 }
 
 // Events is a collection of calendar events
-type Events []*Event
+type Events []Event
 
-const TimeLayout = "2018-02-01T13:30:01+00:00"
+// TimeLayout is what we want the iCal date format to look like
+const TimeLayout = "Jan 02, 2006"
+
+// PORTFOLIO for developing
+var PORTFOLIO = []string{"SAN.PA", "FRE.DE", "AI.PA", "BAYN.DE", "ALV.DE", "DTE.DE", "MSFT", "AIR.PA"}
 
 func main() {
 	mux := http.NewServeMux()
@@ -37,7 +41,10 @@ func feed() http.HandlerFunc {
 		w.Header().Set("Content-Disposition", "inline")
 		w.Header().Set("filename", "calendar.ics")
 
-		entries, err := fetchData()
+		queryParams := r.URL.Query()
+		symbols := strings.Split(queryParams.Get("symbols"), ",")
+
+		entries, err := FetchData(symbols)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -49,43 +56,50 @@ func feed() http.HandlerFunc {
 	})
 }
 
-func fetchData() (Events, error) {
-	dividendDatesPerStock := make(map[string]string)
+// func search() http.HandlerFunc {
+// 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// 		symbols, err := FindSymbol()
+
+// 		writeSuccess()
+// 	})
+// }
+
+// FindSymbol gets a list of symbols from the yahoo lookup page
+// func FindSymbol(search string) ([]string, error) {
+// 	var symbols []string
+// 	c := colly.NewCollector()
+// 	c.OnHTML("h1", func(e *colly.HTMLElement) {
+// 		event.Summary = "Ex Dividend Date: " + e.Text
+// 	})
+// 	c.Visit("https://finance.yahoo.com/lookup/equity?s=" + search)
+
+// 	return symbols, nil
+// }
+
+// FetchData gets the ex dividend dates from the yahoo finance page
+func FetchData(portfolio []string) (Events, error) {
 	result := Events{}
-	PORTFOLIO := []string{"SAN.PA", "FRE.DE", "AI.PA", "BAYN.DE", "ALV.DE", "DTE.DE", "MSFT", "AIR.PA"}
-	// WATCHLIST := []string{"WORK:US", "VAR1:GR", "ROG:SW", "AMZN:US", "GOOGL", "HYQ.DE", "BAS:GR", "BMW:GR", "POAHY:US", "LHA:GR", "RDSA:NA"}
-
 	c := colly.NewCollector()
-
-	for i := 0; i < len(PORTFOLIO); i++ {
+	for i := 0; i < len(portfolio); i++ {
+		var event Event
 		c.OnHTML("td[data-test]", func(e *colly.HTMLElement) {
 			dataTest := e.Attr("data-test")
 			if dataTest == "EX_DIVIDEND_DATE-value" {
-				dividendDatesPerStock[PORTFOLIO[i]] = e.Text
+				date, err := time.Parse(TimeLayout, e.Text)
+				if err != nil {
+					log.Fatal(err)
+				}
+				event.ID = portfolio[i]
+				event.Start = date
+				event.End = date
 			}
 		})
-
-		c.Visit("https://finance.yahoo.com/quote/" + PORTFOLIO[i])
-
-		date, err := time.Parse(TimeLayout, dividendDatesPerStock[PORTFOLIO[i]])
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		event := Event{
-			Start:   date,
-			End:     date,
-			ID:      PORTFOLIO[i],
-			Summary: "Some company",
-		}
-
-		result = append(result, &event)
-
-		fmt.Println(PORTFOLIO[i] + " pays dividends on " + dividendDatesPerStock[PORTFOLIO[i]])
+		c.OnHTML("h1", func(e *colly.HTMLElement) {
+			event.Summary = "Ex Dividend Date: " + e.Text
+		})
+		c.Visit("https://finance.yahoo.com/quote/" + portfolio[i])
+		result = append(result, event)
 	}
-
-	fmt.Println(len(PORTFOLIO), len(dividendDatesPerStock))
-
 	return result, nil
 }
 
